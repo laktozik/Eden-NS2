@@ -33,7 +33,9 @@ endif()
 
 if(NOT YUZU_TZDB_PATH STREQUAL "")
     set(NX_TZDB_BASE_DIR "${YUZU_TZDB_PATH}")
-elseif (MSVC AND NOT CXX_CLANG AND ENABLE_LTO)
+# The MSVC+LTO special case below downloads from a personal server that is not always
+# reachable; the bundled package works the same, so it is opt-in.
+elseif (MSVC AND NOT CXX_CLANG AND ENABLE_LTO AND NX_TZDB_USE_CRUETER_MIRROR)
     # TODO(crueter): boot up the windows vm
     set(NX_TZDB_VERSION "250725")
     set(NX_TZDB_ARCHIVE "${CPM_SOURCE_CACHE}/nx_tzdb/${NX_TZDB_VERSION}.zip")
