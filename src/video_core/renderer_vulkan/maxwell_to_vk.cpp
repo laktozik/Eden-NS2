@@ -239,7 +239,19 @@ FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with
     SURFACE_FORMAT_ELEM(VK_FORMAT_D32_SFLOAT_S8_UINT, usage_attachable, D32_FLOAT_S8_UINT)
 #define SURFACE_FORMAT_ELEM(res, usage, pixel) case PixelFormat::pixel: tuple = {res, usage}; break;
     SURFACE_FORMAT_LIST
-    default: UNREACHABLE_MSG("unknown format {}", pixel_format);
+    default: {
+        // Guest descriptors on newer hardware occasionally reach here with a format the
+        // emulator does not map (or PixelFormat::Invalid). Aborting the whole emulator is worse
+        // than drawing one surface wrong, so fall back to plain RGBA8 and keep running.
+        static u32 logged{};
+        if (logged++ < 32) {
+            LOG_ERROR(Render_Vulkan, "Unknown surface format {}, falling back to A8B8G8R8_UNORM",
+                      static_cast<u32>(pixel_format));
+        }
+        pixel_format = PixelFormat::A8B8G8R8_UNORM;
+        tuple = {VK_FORMAT_A8B8G8R8_UNORM_PACK32, usage_attachable | usage_storage};
+        break;
+    }
 #undef SURFACE_FORMAT_ELEM
 #undef SURFACE_FORMAT_LIST
     }
