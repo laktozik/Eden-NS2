@@ -29,10 +29,10 @@ inline IR::Value Resolve(IR::Value value) {
 }
 
 inline Branches FindBranches(const IR::Program& program) {
+    // Only the blocks owning branch conditions are needed; mapping every instruction allocated a
+    // node per instruction and dominated shader translation time.
+    std::vector<Branch> candidates;
     std::unordered_map<const IR::Inst*, const IR::Block*> owners;
-    for (const auto* block : program.blocks)
-        for (const auto& inst : block->Instructions()) owners.emplace(&inst, block);
-    Branches result;
     for (const auto& node : program.syntax_list) {
         using T = IR::AbstractSyntaxNode::Type;
         Branch branch;
@@ -42,12 +42,29 @@ inline Branches FindBranches(const IR::Program& program) {
         case T::Break: branch = {node.data.break_node.cond, node.data.break_node.merge, node.data.break_node.skip}; break;
         default: continue;
         }
-        const auto found = owners.find(branch.condition.TryInstRecursive());
-        if (found != owners.end() && branch.yes != branch.no &&
-            found->second->ImmSuccessors().size() == 2 &&
-            std::ranges::find(found->second->ImmSuccessors(), branch.yes) != found->second->ImmSuccessors().end() &&
-            std::ranges::find(found->second->ImmSuccessors(), branch.no) != found->second->ImmSuccessors().end())
-            result.emplace(found->second, branch);
+        const auto* condition = branch.condition.TryInstRecursive();
+        if (!condition || branch.yes == branch.no) continue;
+        owners.emplace(condition, nullptr);
+        candidates.push_back(branch);
+    }
+    Branches result;
+    if (candidates.empty()) return result;
+    size_t unresolved = owners.size();
+    for (const auto* block : program.blocks) {
+        for (const auto& inst : block->Instructions()) {
+            const auto found = owners.find(&inst);
+            if (found == owners.end() || found->second) continue;
+            found->second = block;
+            --unresolved;
+        }
+        if (unresolved == 0) break;
+    }
+    for (const auto& branch : candidates) {
+        const auto* owner = owners.at(branch.condition.TryInstRecursive());
+        if (owner && owner->ImmSuccessors().size() == 2 &&
+            std::ranges::find(owner->ImmSuccessors(), branch.yes) != owner->ImmSuccessors().end() &&
+            std::ranges::find(owner->ImmSuccessors(), branch.no) != owner->ImmSuccessors().end())
+            result.emplace(owner, branch);
     }
     return result;
 }
@@ -90,6 +107,13 @@ inline State Join(State a, State b) {
 }
 
 inline size_t Fold(IR::Program& program) {
+    const auto has_u1_phi = [&] {
+        for (auto* block : program.blocks) for (auto& inst : block->Instructions()) {
+            if (inst.GetOpcode() == IR::Opcode::Phi && inst.Type() == IR::Type::U1) return true;
+        }
+        return false;
+    };
+    if (!has_u1_phi()) return 0;
     const auto branches = FindBranches(program);
     struct Input { IR::Value value; std::optional<bool> fact; };
     struct Phi { IR::Inst* inst; std::vector<Input> inputs; State state{State::Bottom}; };

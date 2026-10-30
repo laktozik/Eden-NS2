@@ -55,7 +55,19 @@ struct IndirectBranchVariable {
 
 using Variant = std::variant<IR::Reg, IR::Pred, ZeroFlagTag, SignFlagTag, CarryFlagTag, OverflowFlagTag, GotoVariable, IndirectBranchVariable>;
 // TODO: majority of these require stable iterators, test with XC beforehand
-using ValueMap = std::unordered_map<IR::Block*, IR::Value>;
+// Open addressing: the pass reads and writes these for every (block, variable) pair, and a
+// node-based map spent most of the shader translation time allocating.
+using ValueMap = Common::unordered_map<IR::Block*, IR::Value>;
+
+const IR::Value& EmptyDef() {
+    static const IR::Value empty{};
+    return empty;
+}
+
+const IR::Value& FindDef(const ValueMap& map, IR::Block* block) {
+    const auto it{map.find(block)};
+    return it != map.end() ? it->second : EmptyDef();
+}
 
 struct DefTable {
     const IR::Value& Def(IR::Block* block, IR::Reg variable) {
@@ -66,49 +78,50 @@ struct DefTable {
     }
 
     const IR::Value& Def(IR::Block* block, IR::Pred variable) {
-        return preds[IR::PredIndex(variable)][block];
+        return FindDef(preds[IR::PredIndex(variable)], block);
     }
     void SetDef(IR::Block* block, IR::Pred variable, const IR::Value& value) {
         preds[IR::PredIndex(variable)].insert_or_assign(block, value);
     }
 
     const IR::Value& Def(IR::Block* block, GotoVariable variable) {
-        return goto_vars[variable.index][block];
+        const auto it{goto_vars.find(variable.index)};
+        return it != goto_vars.end() ? FindDef(it->second, block) : EmptyDef();
     }
     void SetDef(IR::Block* block, GotoVariable variable, const IR::Value& value) {
         goto_vars[variable.index].insert_or_assign(block, value);
     }
 
     const IR::Value& Def(IR::Block* block, IndirectBranchVariable) {
-        return indirect_branch_var[block];
+        return FindDef(indirect_branch_var, block);
     }
     void SetDef(IR::Block* block, IndirectBranchVariable, const IR::Value& value) {
         indirect_branch_var.insert_or_assign(block, value);
     }
 
     const IR::Value& Def(IR::Block* block, ZeroFlagTag) {
-        return zero_flag[block];
+        return FindDef(zero_flag, block);
     }
     void SetDef(IR::Block* block, ZeroFlagTag, const IR::Value& value) {
         zero_flag.insert_or_assign(block, value);
     }
 
     const IR::Value& Def(IR::Block* block, SignFlagTag) {
-        return sign_flag[block];
+        return FindDef(sign_flag, block);
     }
     void SetDef(IR::Block* block, SignFlagTag, const IR::Value& value) {
         sign_flag.insert_or_assign(block, value);
     }
 
     const IR::Value& Def(IR::Block* block, CarryFlagTag) {
-        return carry_flag[block];
+        return FindDef(carry_flag, block);
     }
     void SetDef(IR::Block* block, CarryFlagTag, const IR::Value& value) {
         carry_flag.insert_or_assign(block, value);
     }
 
     const IR::Value& Def(IR::Block* block, OverflowFlagTag) {
-        return overflow_flag[block];
+        return FindDef(overflow_flag, block);
     }
     void SetDef(IR::Block* block, OverflowFlagTag, const IR::Value& value) {
         overflow_flag.insert_or_assign(block, value);
