@@ -504,10 +504,10 @@ struct Values {
 #ifdef __ANDROID__
                                                       GpuAccuracy::Low,
 #else
-                                                      // Normal, not High: High turns on safe DMA reads, delayed
+                                                      // Low, not High: High turns on safe DMA reads, delayed
                                                       // fences and precise queries, and keeps the Switch 2 GPU
                                                       // thread split (gpu_split.cpp) from starting at all.
-                                                      GpuAccuracy::Normal,
+                                                      GpuAccuracy::Low,
 #endif
                                                       "gpu_accuracy",
                                                       Category::RendererAdvanced,
