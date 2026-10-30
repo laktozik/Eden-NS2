@@ -438,7 +438,8 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
                         }
                         if (expected != base + source.size)
                             throw Shader::RuntimeError("Incomplete texture-handle buffer mapping");
-                        if (std::getenv("EDEN_NATIVE_DRAW_DIAGNOSTICS")) {
+                        if (static const bool dump_buffers = std::getenv("EDEN_NATIVE_DRAW_DIAGNOSTICS") != nullptr;
+                            dump_buffers) {
                             std::vector<u8> bytes(source.size);
                             gpu_memory->ReadBlock(base, bytes.data(), bytes.size());
                             std::ofstream dump(fmt::format("native-buffer-textures-{}-{}-{:x}-{:x}.bin", stage,
