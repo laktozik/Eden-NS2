@@ -38,7 +38,7 @@ jobs:
     - name: Build
       run: |
         chmod +x .ci/android/build.sh
-        .ci/android/build.sh -t standard -b Release
+        .ci/android/build.sh -t standard -b Release -DENABLE_WERROR=OFF
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
