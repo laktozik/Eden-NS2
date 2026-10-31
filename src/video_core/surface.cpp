@@ -473,7 +473,6 @@ u64 TranscodedAstcSize(u64 base_size, PixelFormat format) {
 
     switch (Settings::values.astc_recompression.GetValue()) {
     case Settings::AstcRecompression::Bc1:
-        return uncompressed_size / 8;
     case Settings::AstcRecompression::Bc3:
         return uncompressed_size / 4;
     default:
