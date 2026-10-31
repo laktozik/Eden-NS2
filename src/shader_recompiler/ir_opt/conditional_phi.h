@@ -3,6 +3,7 @@
 #pragma once
 
 #include <algorithm>
+#include <iterator>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -119,20 +120,32 @@ inline size_t Fold(IR::Program& program) {
     struct Phi { IR::Inst* inst; std::vector<Input> inputs; State state{State::Bottom}; };
     std::vector<Phi> phis;
     std::unordered_map<const IR::Inst*, size_t> indices;
-    for (auto* block : program.blocks) for (auto& inst : block->Instructions()) {
-        if (inst.GetOpcode() != IR::Opcode::Phi || inst.Type() != IR::Type::U1) continue;
-        Phi phi{&inst, {}};
-        for (size_t i = 0; i < inst.NumArgs(); ++i) {
-            Input input{Resolve(inst.Arg(i)), {}};
-            if (const auto branch = branches.find(inst.PhiBlock(i)); branch != branches.end()) {
-                const auto facts = EdgeFacts(branch->second, block);
-                if (const auto fact = facts.find(input.value.TryInstRecursive()); fact != facts.end())
-                    input.fact = fact->second;
+    // Edge facts depend only on the (predecessor, block) edge; the phis of a block share them.
+    std::vector<std::pair<const IR::Block*, Facts>> edge_facts;
+    for (auto* block : program.blocks) {
+        edge_facts.clear();
+        for (auto& inst : block->Instructions()) {
+            if (inst.GetOpcode() != IR::Opcode::Phi || inst.Type() != IR::Type::U1) continue;
+            Phi phi{&inst, {}};
+            for (size_t i = 0; i < inst.NumArgs(); ++i) {
+                Input input{Resolve(inst.Arg(i)), {}};
+                const IR::Block* const predecessor = inst.PhiBlock(i);
+                if (const auto branch = branches.find(predecessor); branch != branches.end()) {
+                    auto cached = std::ranges::find(edge_facts, predecessor,
+                                                    &std::pair<const IR::Block*, Facts>::first);
+                    if (cached == edge_facts.end()) {
+                        edge_facts.emplace_back(predecessor, EdgeFacts(branch->second, block));
+                        cached = std::prev(edge_facts.end());
+                    }
+                    const Facts& facts = cached->second;
+                    if (const auto fact = facts.find(input.value.TryInstRecursive()); fact != facts.end())
+                        input.fact = fact->second;
+                }
+                phi.inputs.push_back(input);
             }
-            phi.inputs.push_back(input);
+            indices.emplace(&inst, phis.size());
+            phis.push_back(std::move(phi));
         }
-        indices.emplace(&inst, phis.size());
-        phis.push_back(std::move(phi));
     }
     const auto propagate = [&] {
         bool changed;
