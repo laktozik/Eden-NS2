@@ -1185,7 +1185,18 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
             const u32 source = uniform_register(insn.words[1]), carrier = uniform_register(high);
             // Bit 76 selects USHF.R.W.U32.HI: Ud = Uc >> (Us & 31).
             const bool right = insn.words[2] == (0x08011e00U | high);
-            if (insn.Bits(24, 8) != 63 || (insn.words[2] != (0x08010e00U | high) && !right) || dest >= 63 ||
+            // Without .HI (bit 80) and with URZ as the high word, the result is the low word
+            // shifted: USHF.L.W.U32 Ud, Ua, Us, URZ is Ua << (Us & 31), .R is Ua >> (Us & 31).
+            const u32 low = insn.Bits(24, 8);
+            const bool low_left = insn.words[2] == 0x08000e3fU, low_right = insn.words[2] == 0x08001e3fU;
+            if ((low_left || low_right) && low < 63 && dest < 63 && insn.words[1] < 64 &&
+                source != ~0U && native_predicate == 7) {
+                emit((low_right ? 0x5c28000000070000ULL : 0x5c48000000070000ULL) |
+                     uniform_register(static_cast<u32>(dest)) | (u64{uniform_register(low)} << 8) |
+                     (u64{source} << 20) | (u64{1} << 39));
+                break;
+            }
+            if (low != 63 || (insn.words[2] != (0x08010e00U | high) && !right) || dest >= 63 ||
                 insn.words[1] >= 64 || source == ~0U || carrier == ~0U || native_predicate != 7)
                 return fail(index, "native uniform shift mode");
             emit((right ? 0x5c28000000070000ULL : 0x5c48000000070000ULL) | uniform_register(static_cast<u32>(dest)) | (u64{carrier} << 8) |
@@ -1330,21 +1341,26 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                 (u64{1} << 29) | (u64{shuffle_mode} << 30) | (u64{insn.Bits(40, 13)} << 34) | (u64{insn.Bits(81, 3)} << 48));
             break;
         }
-        case 0x98e: { // RED.E.ADD/MAX.STRONG.GPU U32; uniform pointers support ADD.
+        case 0x98e: { // RED.E.<op>.STRONG.GPU U32, register or uniform pointer.
             u32 address = insn.Bits(24, 8);
-            if ((insn.words[2] & ~0xffU) == 0x0c10e100 && address == 255 &&
-                insn.Bits(40, 24) == 0 && insn.Bits(64, 8) < 63 - 1 && !(insn.Bits(64, 8) & 1)) {
+            // Bits 40-63: signed byte offset; Maxwell RED holds 20 bits at 28.
+            const s32 red_offset = static_cast<s32>(insn.Bits(40, 24) << 8) >> 8;
+            if (red_offset < -(1 << 19) || red_offset >= (1 << 19))
+                return fail(index, "native global reduction offset");
+            constexpr u32 RedOpBits = 0x03800000U; // bits 87-89 pick ADD/MIN/MAX/INC/DEC/AND/OR/XOR
+            if ((insn.words[2] & ~(0xffU | RedOpBits)) == 0x0c10e100 && address == 255 &&
+                insn.Bits(64, 8) < 63 - 1 && !(insn.Bits(64, 8) & 1)) {
                 const u32 uniform = uniform_register(insn.Bits(64, 8));
                 for (u32 word = 0; word < 2; ++word)
                     emit(0x5c98000000000000ULL | predicate | (250 + word) |
                          (u64{uniform + word} << 20) | (u64{15} << 39));
                 address = 250;
-            } else if ((insn.words[2] & ~0x03800000U) != 0x0010e100 || // bits 87-89 pick ADD/MIN/MAX/INC/DEC/AND/OR/XOR
-                       insn.Bits(40, 24) || (address & 1)) {
+            } else if ((insn.words[2] & ~RedOpBits) != 0x0010e100 || (address & 1)) {
                 return fail(index, "native global reduction mode");
             }
             emit(0xebf8000000000000ULL | predicate | insn.Bits(32, 8) |
-                (u64{address} << 8) | (u64{insn.Bits(87, 3)} << 23) | (u64{1} << 48));
+                (u64{address} << 8) | (u64{insn.Bits(87, 3)} << 23) |
+                (u64{static_cast<u32>(red_offset) & 0xfffffU} << 28) | (u64{1} << 48));
             break;
         }
         case 0x2bd: // UFLO.U32, optionally returning the normalization shift.

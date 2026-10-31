@@ -9293,3 +9293,45 @@ TEST_CASE("Native half matrix rounding matches measured hardware fragments", "[n
         REQUIRE(registers[lane][32 + fragment] == hardware[depth == 16][lane * 2 + fragment]);
     }
 }
+
+TEST_CASE("Native uniform low-word shifts by a register amount", "[native-shader]") {
+    // USHF.L/R.W.U32 UR4, UR5, UR4, URZ: the low word shifted, shift amount wrapped to 0-31.
+    for (const bool right : {false, true}) {
+        const std::array<Native, 2> input{{
+            {{0x05047299, 4, right ? 0x08001e3fU : 0x08000e3fU, 0}}, VertexTransform.back()}};
+        Shader::ObjectPool<IR::Inst> pool;
+        IR::Block block{pool};
+        TranslateScalarNative(input, block);
+        for (const u32 value : {0x80000001U, 0x12345678U, 0xffffffffU})
+            for (const u32 shift : {0U, 1U, 4U, 31U, 32U, 36U}) {
+                ScalarNativeMachine machine;
+                machine.regs[221] = value;
+                machine.regs[220] = shift;
+                machine.Execute(block);
+                REQUIRE(machine.regs[220] == (right ? value >> (shift & 31) : value << (shift & 31)));
+                REQUIRE(machine.regs[221] == value);
+            }
+    }
+}
+
+TEST_CASE("Native uniform global reductions keep their operation and offset", "[native-shader]") {
+    // RED.E.MAX.STRONG.GPU [UR6.64+0x4], R25 (Mario Kart World).
+    const std::array<Native, 2> input{{{{0xff00798e, 0x00000419, 0x0d10e106, 0x0001e400}},
+                                       VertexTransform.back()}};
+    Shader::ObjectPool<IR::Inst> pool;
+    IR::Block block{pool};
+    TranslateScalarNative(input, block);
+    for (const u32 current : {0U, 5U, 0xffffffffU})
+        for (const u32 operand : {0U, 7U, 0x80000000U}) {
+            ScalarNativeMachine machine;
+            machine.regs[222] = 0xfffffff0U;
+            machine.regs[223] = 0x21;
+            machine.regs[25] = operand;
+            const u64 base = 0x21fffffff0ULL;
+            machine.global[base] = 0xcafebeef;
+            machine.global[base + 4] = current;
+            machine.Execute(block);
+            REQUIRE(machine.global[base + 4] == std::max(current, operand));
+            REQUIRE(machine.global[base] == 0xcafebeef);
+        }
+}
