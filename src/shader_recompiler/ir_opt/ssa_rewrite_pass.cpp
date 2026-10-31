@@ -85,10 +85,13 @@ struct DefTable {
     }
 
     const IR::Value& Def(IR::Block* block, GotoVariable variable) {
-        const auto it{goto_vars.find(variable.index)};
-        return it != goto_vars.end() ? FindDef(it->second, block) : EmptyDef();
+        return variable.index < goto_vars.size() ? FindDef(goto_vars[variable.index], block)
+                                                 : EmptyDef();
     }
     void SetDef(IR::Block* block, GotoVariable variable, const IR::Value& value) {
+        if (variable.index >= goto_vars.size()) {
+            goto_vars.resize(variable.index + 1);
+        }
         goto_vars[variable.index].insert_or_assign(block, value);
     }
 
@@ -128,8 +131,8 @@ struct DefTable {
     }
 
     std::array<ValueMap, IR::NUM_USER_PREDS> preds;
-    // TODO: Requires stable iterators
-    std::unordered_map<u32, ValueMap> goto_vars;
+    // Goto variable ids are dense label ids starting at 0.
+    std::vector<ValueMap> goto_vars;
     ValueMap indirect_branch_var;
     ValueMap zero_flag;
     ValueMap sign_flag;
@@ -160,7 +163,6 @@ enum class Status {
     PushPhiArgument,
 };
 
-template <typename Type>
 struct ReadState {
     ReadState(IR::Block* block_) : block{block_} {}
     ReadState() = default;
@@ -183,10 +185,11 @@ public:
     template <typename Type>
     IR::Value ReadVariable(Type variable, IR::Block* root_block) {
         // TODO: Windows commits sodoku if you use small_vector
-        std::vector<ReadState<Type>> stack{
-            ReadState<Type>(nullptr),
-            ReadState<Type>(root_block),
-        };
+        // Reads never nest, so one stack is reused instead of allocating one per read.
+        std::vector<ReadState>& stack{read_stack};
+        stack.clear();
+        stack.emplace_back(nullptr);
+        stack.emplace_back(root_block);
         const auto prepare_phi_operand{[&] {
             if (stack.back().pred_it == stack.back().pred_end) {
                 IR::Inst* const phi{stack.back().phi};
@@ -316,6 +319,7 @@ private:
     // TODO: Windows dies with stack exhaustion?
     std::unordered_map<IR::Block*, std::map<Variant, IR::Inst*>> incomplete_phis;
     DefTable current_def;
+    std::vector<ReadState> read_stack;
 };
 
 void VisitInst(Pass& pass, IR::Block* block, IR::Inst& inst) {
